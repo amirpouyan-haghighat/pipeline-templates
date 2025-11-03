@@ -177,7 +177,7 @@ jobs:
       - name: Security Scan Image with Trivy
         id: trivy_scan
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           scan-type: image
           image-ref: ${{ steps.build.outputs.imageid }}
