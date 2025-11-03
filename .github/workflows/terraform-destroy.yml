@@ -46,7 +46,9 @@ on:
       AZURE_BACKEND_CONTAINER:
         description: Blob container name where Terraform state files are stored.
         required: true
-
+      CLOUDFLARE_API_TOKEN:
+        description: Cloudflare API token for managing DNS records.
+        required: false
 permissions:
   contents: read
   id-token: write
@@ -55,7 +57,7 @@ permissions:
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 jobs:
   terraform_plan:
     name: Terraform Plan

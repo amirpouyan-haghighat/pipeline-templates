@@ -46,6 +46,9 @@ on:
       AZURE_BACKEND_CONTAINER:
         description: Blob container name where Terraform state files are stored.
         required: true
+      CLOUDFLARE_API_TOKEN:
+        description: Cloudflare API token for managing DNS records.
+        required: false
       REPO_PAT:
         description: Personal Access Token for accessing the ArgoCD configuration repository.
         required: false
@@ -59,6 +62,7 @@ env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "true"
   TF_VAR_argocd_repo_password: ${{ secrets.REPO_PAT }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 jobs:
   terraform_plan:
     name: Terraform Plan
