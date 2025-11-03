@@ -129,7 +129,7 @@ jobs:
           echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
 
       - name: Upload Plan Log
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Terraform-Plan-Log
           path: ${{ inputs.terraform_directory }}/plan.log

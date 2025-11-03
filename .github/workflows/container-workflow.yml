@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload Scan Results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: trivy-results
           path: trivy-results.sarif
