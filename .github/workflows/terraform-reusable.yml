@@ -52,6 +52,12 @@ on:
       REPO_PAT:
         description: Personal Access Token for accessing the ArgoCD configuration repository.
         required: false
+      SEALED_SECRET_PUBLIC_CERT:
+        description: Sealed Secrets public certificate for encrypting secrets.
+        required: false
+      SEALED_SECRET_PRIVATE_KEY:
+        description: Sealed Secrets private key for encrypting secrets.
+        required: false
 
 permissions:
   contents: read
@@ -63,6 +69,8 @@ env:
   TF_INPUT: "true"
   TF_VAR_argocd_repo_password: ${{ secrets.REPO_PAT }}
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  TF_VAR_sealed_secrets_public_cert: ${{ secrets.SEALED_SECRET_PUBLIC_CERT }}
+  TF_VAR_sealed_secrets_private_key: ${{ secrets.SEALED_SECRET_PRIVATE_KEY }}
 jobs:
   terraform_plan:
     name: Terraform Plan
