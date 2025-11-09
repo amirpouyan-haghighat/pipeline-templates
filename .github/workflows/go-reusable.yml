@@ -1,0 +1,91 @@
+name: reusable-go
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Path to the Go module to build and test.
+        required: false
+        default: "."
+        type: string
+      go_version:
+        description: Go version to install.
+        required: false
+        default: "1.21"
+        type: string
+      release_branch:
+        description: Branch that triggers semantic-release.
+        required: false
+        default: main
+        type: string
+      environment_name:
+        description: GitHub environment for gating releases.
+        required: false
+        default: Production
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  build_and_release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+    outputs:
+      release_version: ${{ steps.release.outputs.new_release_version }}
+      release_published: ${{ steps.release.outputs.new_release_published }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate PR title follows Conventional Commits
+        if: github.event_name == 'pull_request'
+        uses: amannn/action-semantic-pull-request@v6
+        with:
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+
+      - name: Download modules
+        working-directory: ${{ inputs.working_directory }}
+        run: go mod download
+
+      - name: Run tests
+        working-directory: ${{ inputs.working_directory }}
+        run: go test ./...
+
+      - name: Build
+        working-directory: ${{ inputs.working_directory }}
+        run: go build ./...
+
+      - name: Run semantic-release
+        id: release
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', inputs.release_branch)
+        uses: amirpouyan-haghighat/pipeline-templates/.github/actions/semantic-release@main
+        with:
+          release_branch: ${{ inputs.release_branch }}
+          repo_token: ${{ secrets.REPO_PAT }}
+          github_token: ${{ github.token }}
