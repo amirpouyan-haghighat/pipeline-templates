@@ -9,9 +9,8 @@ on:
         default: "."
         type: string
       go_version:
-        description: Go version to install.
-        required: false
-        default: "1.21"
+        description: Go version to install. Callers must set this explicitly (e.g. "1.22").
+        required: true
         type: string
       release_branch:
         description: Branch that triggers semantic-release.
