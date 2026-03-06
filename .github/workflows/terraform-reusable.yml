@@ -86,7 +86,7 @@ jobs:
       exitcode: ${{ steps.plan.outputs.exitcode }}
     steps:
       - name: Checkout Configuration
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Azure Login
         uses: azure/login@v2
@@ -183,7 +183,7 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - name: Checkout Configuration
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Azure Login
         uses: azure/login@v2

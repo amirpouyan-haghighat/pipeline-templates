@@ -48,7 +48,7 @@ jobs:
             REGISTRY_LOGIN_SERVER: ${{ inputs.registry_name }}.azurecr.io
         steps:
             - name: Checkout Sources
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   fetch-depth: 0
 
