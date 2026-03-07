@@ -158,11 +158,22 @@ jobs:
           output: trivy-results.sarif
         continue-on-error: true
 
+      - name: Derive Trivy identifiers
+        id: trivy_ids
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          JOB_ID: ${{ github.job }}
+          CHECK_RUN_ID: ${{ job.check_run_id }}
+        run: |
+          echo "artifact_name=trivy-results-${JOB_ID}-${CHECK_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "comment_header=trivy-scan-${JOB_ID}-${CHECK_RUN_ID}" >> "$GITHUB_OUTPUT"
+
       - name: Upload Scan Results
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
         with:
-          name: trivy-results
+          name: ${{ steps.trivy_ids.outputs.artifact_name }}
           path: trivy-results.sarif
 
       - name: Generate Scan Summary
@@ -216,6 +227,6 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          header: trivy-scan
+          header: ${{ steps.trivy_ids.outputs.comment_header }}
           message: |
             ${{ steps.trivy_summary.outputs.report }}
