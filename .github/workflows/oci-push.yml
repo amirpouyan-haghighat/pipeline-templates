@@ -69,7 +69,7 @@ jobs:
               run: az acr login --name ${{ inputs.registry_name }}
 
             - name: Set up ORAS CLI
-              uses: oras-project/setup-oras@v1
+              uses: oras-project/setup-oras@v2
 
             - name: Package Manifests
               run: |
