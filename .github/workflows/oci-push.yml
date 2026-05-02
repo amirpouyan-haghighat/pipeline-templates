@@ -1,88 +1,88 @@
 name: oci-push
 
 on:
-    workflow_call:
-        inputs:
-            manifest_directory:
-                description: Directory containing Kubernetes manifests relative to repository root.
-                required: false
-                default: Kubernetes
-                type: string
-            artifact_name:
-                description: Name of the OCI repository in the container registry.
-                required: true
-                type: string
-            registry_name:
-                description: Azure Container Registry name (without domain suffix).
-                required: true
-                type: string
-            environment_name:
-                description: GitHub environment name used to gate release.
-                required: false
-                default: Production
-                type: string
-        secrets:
-            AZURE_CLIENT_ID:
-                description: Azure AD application (service principal) client ID for registry authentication.
-                required: true
-            AZURE_TENANT_ID:
-                description: Azure AD tenant ID that owns the service principal.
-                required: true
-            AZURE_SUBSCRIPTION_ID:
-                description: Azure subscription ID that contains the registry.
-                required: true
+  workflow_call:
+    inputs:
+      manifest_directory:
+        description: Directory containing Kubernetes manifests relative to repository root.
+        required: false
+        default: Kubernetes
+        type: string
+      artifact_name:
+        description: Name of the OCI repository in the container registry.
+        required: true
+        type: string
+      registry_name:
+        description: Azure Container Registry name (without domain suffix).
+        required: true
+        type: string
+      environment_name:
+        description: GitHub environment name used to gate release.
+        required: false
+        default: Production
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        description: Azure AD application (service principal) client ID for registry authentication.
+        required: true
+      AZURE_TENANT_ID:
+        description: Azure AD tenant ID that owns the service principal.
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: Azure subscription ID that contains the registry.
+        required: true
 permissions:
-    contents: read
-    id-token: write
+  contents: read
+  id-token: write
 
 jobs:
-    push_oci:
-        name: Package Manifests and Push OCI Artifact
-        if: github.ref == 'refs/heads/main' && success()
-        runs-on: ubuntu-latest
-        environment:
-            name: ${{ inputs.environment_name }}
-        outputs:
-            artifact_tag: ${{ steps.resolve_tag.outputs.artifact_tag }}
-        env:
-            REGISTRY_LOGIN_SERVER: ${{ inputs.registry_name }}.azurecr.io
-        steps:
-            - name: Checkout Sources
-              uses: actions/checkout@v6
-              with:
-                  fetch-depth: 0
+  push_oci:
+    name: Package Manifests and Push OCI Artifact
+    if: github.ref == 'refs/heads/main' && success()
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+    outputs:
+      artifact_tag: ${{ steps.resolve_tag.outputs.artifact_tag }}
+    env:
+      REGISTRY_LOGIN_SERVER: ${{ inputs.registry_name }}.azurecr.io
+    steps:
+      - name: Checkout Sources
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-            - name: Resolve Artifact Tag
-              id: resolve_tag
-              run: |
-                  tag="${GITHUB_SHA:0:12}"
-                  echo "artifact_tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Resolve Artifact Tag
+        id: resolve_tag
+        run: |
+          tag="${GITHUB_SHA:0:12}"
+          echo "artifact_tag=$tag" >> "$GITHUB_OUTPUT"
 
-            - name: Azure Login
-              uses: azure/login@v3
-              with:
-                  client-id: ${{ secrets.AZURE_CLIENT_ID }}
-                  tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-                  subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-            - name: Log into ACR
-              run: az acr login --name ${{ inputs.registry_name }}
+      - name: Log into ACR
+        run: az acr login --name ${{ inputs.registry_name }}
 
-            - name: Set up ORAS CLI
-              uses: oras-project/setup-oras@v2
+      - name: Set up ORAS CLI
+        uses: oras-project/setup-oras@v2
 
-            - name: Package Manifests
-              run: |
-                  if [ ! -d "${{ inputs.manifest_directory }}" ]; then
-                    echo "Manifest directory '${{ inputs.manifest_directory }}' not found." >&2
-                    exit 1
-                  fi
-                  tar -czf manifests.tgz -C "${{ inputs.manifest_directory }}" .
+      - name: Package Manifests
+        run: |
+          if [ ! -d "${{ inputs.manifest_directory }}" ]; then
+            echo "Manifest directory '${{ inputs.manifest_directory }}' not found." >&2
+            exit 1
+          fi
+          tar -czf manifests.tgz -C "${{ inputs.manifest_directory }}" .
 
-            - name: Push Manifests as OCI Artifact
-              run: |
-                  artifact_ref="${REGISTRY_LOGIN_SERVER}/${{ inputs.artifact_name }}"
-                  artifact_tag="${{ steps.resolve_tag.outputs.artifact_tag }}"
-                  oras push "${artifact_ref}:${artifact_tag}" \
-                    manifests.tgz:application/vnd.oci.image.layer.v1.tar+gzip
-                  oras tag "${artifact_ref}:${artifact_tag}" latest
+      - name: Push Manifests as OCI Artifact
+        run: |
+          artifact_ref="${REGISTRY_LOGIN_SERVER}/${{ inputs.artifact_name }}"
+          artifact_tag="${{ steps.resolve_tag.outputs.artifact_tag }}"
+          oras push "${artifact_ref}:${artifact_tag}" \
+            manifests.tgz:application/vnd.oci.image.layer.v1.tar+gzip
+          oras tag "${artifact_ref}:${artifact_tag}" latest

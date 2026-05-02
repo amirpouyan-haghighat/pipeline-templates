@@ -24,7 +24,7 @@ on:
         default: main
         type: string
       vulnerability_threshold:
-        description: Minimum vulnerability severity (comma separated) that should fail the build, for example HIGH,CRITICAL.
+        description: Severity levels (comma separated) included in the PR Trivy scan summary, for example HIGH,CRITICAL. The scan is informational; findings do not fail the build.
         required: false
         default: HIGH,CRITICAL
         type: string
@@ -163,11 +163,13 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: bash
         env:
-          JOB_ID: ${{ github.job }}
-          CHECK_RUN_ID: ${{ job.check_run_id }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          REGISTRY_NAME: ${{ inputs.registry_name }}
         run: |
-          echo "artifact_name=trivy-results-${JOB_ID}-${CHECK_RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "comment_header=trivy-scan-${JOB_ID}-${CHECK_RUN_ID}" >> "$GITHUB_OUTPUT"
+          safe_image="$(printf '%s' "$IMAGE_NAME" | sed 's/[^A-Za-z0-9_.-]/-/g')"
+          safe_registry="$(printf '%s' "$REGISTRY_NAME" | sed 's/[^A-Za-z0-9_.-]/-/g')"
+          echo "artifact_name=trivy-results-${safe_registry}-${safe_image}" >> "$GITHUB_OUTPUT"
+          echo "comment_header=trivy-scan-${safe_registry}-${safe_image}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Scan Results
         if: github.event_name == 'pull_request'

@@ -62,7 +62,6 @@ on:
 permissions:
   contents: read
   id-token: write
-  pull-requests: write
 
 env:
   TF_IN_AUTOMATION: "true"
@@ -137,8 +136,9 @@ jobs:
           terraform plan -detailed-exitcode -out plan.log ${{ inputs.args }}
           exitcode="$?"
           set -e
-          echo $exitcode
-          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          echo "$exitcode"
+          if [ "$exitcode" -ne 0 ] && [ "$exitcode" -ne 2 ]; then exit "$exitcode"; fi
+          echo "exitcode=$exitcode" >> "$GITHUB_OUTPUT"
 
       - name: Upload Plan Log
         uses: actions/upload-artifact@v7
