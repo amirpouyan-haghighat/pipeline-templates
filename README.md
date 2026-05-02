@@ -205,7 +205,7 @@ graph TD
 | `image_name` | ✅ | - | Container image name |
 | `registry_name` | ✅ | - | Azure Container Registry name |
 | `release_branch` | ❌ | `main` | Branch triggering releases |
-| `vulnerability_threshold` | ❌ | `HIGH,CRITICAL` | Severity levels to fail on |
+| `vulnerability_threshold` | ❌ | `HIGH,CRITICAL` | Severity levels surfaced in the PR scan summary (informational; scan does not fail the build) |
 | `environment_name` | ❌ | `Production` | GitHub environment name |
 
 #### 🔒 Secrets
@@ -227,9 +227,9 @@ graph TD
 
 #### 🔒 Security Features
 - **Trivy Scanning**: Scans for OS and library vulnerabilities
-- **Configurable Thresholds**: Fail builds based on severity
+- **Configurable Severity Filter**: Choose which vulnerability levels appear in the PR summary
 - **SARIF Reports**: Structured vulnerability reporting
-- **PR Comments**: Automated security summaries
+- **PR Comments**: Automated security summaries (informational; the scan does not fail the build)
 
 </details>
 
@@ -438,7 +438,7 @@ The container workflow includes Trivy security scanning that:
 - Scans for OS and library vulnerabilities
 - Reports findings in SARIF format
 - Posts summaries to pull requests
-- Fails builds based on configurable thresholds
+- Filters findings by configurable severity threshold (informational; does not fail the build)
 
 ---
 
