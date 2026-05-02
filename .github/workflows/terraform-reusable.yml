@@ -137,7 +137,7 @@ jobs:
           exitcode="$?"
           set -e
           echo "$exitcode"
-          if [ "$exitcode" -eq 1 ]; then exit 1; fi
+          if [ "$exitcode" -ne 0 ] && [ "$exitcode" -ne 2 ]; then exit "$exitcode"; fi
           echo "exitcode=$exitcode" >> "$GITHUB_OUTPUT"
 
       - name: Upload Plan Log

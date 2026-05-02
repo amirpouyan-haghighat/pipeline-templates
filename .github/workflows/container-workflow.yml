@@ -164,10 +164,12 @@ jobs:
         shell: bash
         env:
           IMAGE_NAME: ${{ inputs.image_name }}
+          REGISTRY_NAME: ${{ inputs.registry_name }}
         run: |
-          safe_name="${IMAGE_NAME//\//-}"
-          echo "artifact_name=trivy-results-${safe_name}" >> "$GITHUB_OUTPUT"
-          echo "comment_header=trivy-scan-${safe_name}" >> "$GITHUB_OUTPUT"
+          safe_image="$(printf '%s' "$IMAGE_NAME" | sed 's/[^A-Za-z0-9_.-]/-/g')"
+          safe_registry="$(printf '%s' "$REGISTRY_NAME" | sed 's/[^A-Za-z0-9_.-]/-/g')"
+          echo "artifact_name=trivy-results-${safe_registry}-${safe_image}" >> "$GITHUB_OUTPUT"
+          echo "comment_header=trivy-scan-${safe_registry}-${safe_image}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Scan Results
         if: github.event_name == 'pull_request'
