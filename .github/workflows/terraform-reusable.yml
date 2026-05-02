@@ -89,7 +89,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -161,7 +161,7 @@ jobs:
       - name: Await Manual Approval
         uses: trstringer/manual-approval@v1
         with:
-          secret: ${{ github.TOKEN }}
+          secret: ${{ github.token }}
           approvers: amirpouyan-haghighat
           minimum-approvals: 1
           issue-title: "Manual Approval Required for Terraform Apply"
@@ -186,7 +186,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
