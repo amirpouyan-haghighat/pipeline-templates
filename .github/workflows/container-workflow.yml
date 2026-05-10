@@ -44,11 +44,8 @@ on:
         description: Azure subscription ID that contains the registry.
         required: true
       REPO_PAT:
-        description: Personal Access Token for accessing the ArgoCD configuration repository.
+        description: GitHub PAT (repo + read:packages) used for Argo config writes, semantic-release, and cross-repo NuGet restore inside the docker build.
         required: true
-      NIFTROX_FEED_PAT:
-        description: Optional GitHub PAT (read:packages) used during docker build to restore private NuGet packages from GitHub Packages.
-        required: false
 permissions:
   contents: write
   id-token: write
@@ -146,13 +143,12 @@ jobs:
           load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Forward a token Dockerfiles can use to restore private NuGet
-          # packages from GitHub Packages. Prefers an explicitly-provided
-          # NIFTROX_FEED_PAT (cross-org or scoped PAT), otherwise falls
-          # back to the workflow's GITHUB_TOKEN, which works when each
-          # consumed package grants Actions access to the calling repo.
+          # Forward REPO_PAT into the build so Dockerfiles can restore
+          # cross-repo NuGet packages from GitHub Packages. The build mounts
+          # this as a BuildKit secret (id=repo_pat) and the Dockerfile maps
+          # it to env=REPO_PAT, which nuget.config reads via %REPO_PAT%.
           secrets: |
-            nuget_pat=${{ secrets.NIFTROX_FEED_PAT || github.token }}
+            repo_pat=${{ secrets.REPO_PAT }}
 
       - name: Security Scan Image with Trivy
         id: trivy_scan
