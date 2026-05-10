@@ -52,6 +52,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  packages: read
   pull-requests: write
 
 jobs:
@@ -145,11 +146,13 @@ jobs:
           load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Mount NIFTROX_FEED_PAT as a BuildKit secret so Dockerfiles
-          # that restore from GitHub Packages can authenticate without
-          # baking the token into image layers.
+          # Forward a token Dockerfiles can use to restore private NuGet
+          # packages from GitHub Packages. Prefers an explicitly-provided
+          # NIFTROX_FEED_PAT (cross-org or scoped PAT), otherwise falls
+          # back to the workflow's GITHUB_TOKEN, which works when each
+          # consumed package grants Actions access to the calling repo.
           secrets: |
-            nuget_pat=${{ secrets.NIFTROX_FEED_PAT }}
+            nuget_pat=${{ secrets.NIFTROX_FEED_PAT || github.token }}
 
       - name: Security Scan Image with Trivy
         id: trivy_scan
