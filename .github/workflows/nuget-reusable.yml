@@ -1,0 +1,128 @@
+name: reusable-nuget
+
+on:
+  workflow_call:
+    inputs:
+      package_csprojs:
+        description: |
+          Multiline list of .csproj paths (relative to repo root) to pack
+          and push to GitHub Packages. One csproj per line.
+        required: true
+        type: string
+      dotnet_version:
+        description: .NET SDK version (e.g., "10.0.x").
+        required: true
+        type: string
+      release_branch:
+        description: Branch that triggers semantic-release and the NuGet push.
+        required: false
+        default: main
+        type: string
+      environment_name:
+        description: GitHub environment for gating releases.
+        required: false
+        default: Production
+        type: string
+    secrets:
+      REPO_PAT:
+        description: GitHub PAT used by semantic-release for tagging and release creation.
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  build_and_release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+    outputs:
+      release_version: ${{ steps.release.outputs.new_release_version }}
+      release_published: ${{ steps.release.outputs.new_release_published }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate PR title follows Conventional Commits
+        if: github.event_name == 'pull_request'
+        uses: amannn/action-semantic-pull-request@v6
+        with:
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Build packages (validation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r proj; do
+            [ -z "${proj// }" ] && continue
+            echo "::group::dotnet build $proj"
+            dotnet build "$proj" --configuration Release
+            echo "::endgroup::"
+          done <<< "${{ inputs.package_csprojs }}"
+
+      - name: Run semantic-release
+        id: release
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', inputs.release_branch)
+        uses: amirpouyan-haghighat/pipeline-templates/.github/actions/semantic-release@main
+        with:
+          release_branch: ${{ inputs.release_branch }}
+          repo_token: ${{ secrets.REPO_PAT }}
+          github_token: ${{ github.token }}
+
+      - name: Pack at release version
+        if: steps.release.outputs.new_release_published == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.new_release_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          while IFS= read -r proj; do
+            [ -z "${proj// }" ] && continue
+            echo "::group::dotnet pack $proj at $VERSION"
+            dotnet pack "$proj" \
+              --configuration Release \
+              -p:Version="$VERSION" \
+              --output "$GITHUB_WORKSPACE/artifacts"
+            echo "::endgroup::"
+          done <<< "${{ inputs.package_csprojs }}"
+
+      - name: Push to GitHub Packages
+        if: steps.release.outputs.new_release_published == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet nuget add source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --name github \
+            --username "${{ github.repository_owner }}" \
+            --password "${{ github.token }}" \
+            --store-password-in-clear-text
+          dotnet nuget push "$GITHUB_WORKSPACE/artifacts/*.nupkg" \
+            --source github \
+            --api-key "${{ github.token }}" \
+            --skip-duplicate
