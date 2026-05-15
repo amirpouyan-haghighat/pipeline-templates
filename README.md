@@ -25,6 +25,7 @@
   - [Terraform Destroy Workflow](#2-terraform-destroy-workflow)
   - [Container Build & Push Workflow](#3-container-build--push-workflow)
   - [OCI Manifest Push Workflow](#4-oci-manifest-push-workflow)
+  - [EF Core Migrations Workflow](#5-ef-core-migrations-workflow)
 - [🚀 Quick Start](#-quick-start)
 - [📚 Usage Examples](#-usage-examples)
 - [🔐 Security](#-security)
@@ -290,6 +291,75 @@ graph LR
 
 ---
 
+### 5️⃣ EF Core Migrations Workflow
+
+**File:** `.github/workflows/efcore-migrations-reusable.yml`
+
+Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL with Entra-only authentication. Mirrors the Terraform workflow's plan → approve → apply shape so the cognitive model is identical across infrastructure and schema changes.
+
+<details>
+<summary>📖 <b>Click to expand details</b></summary>
+
+#### 🎯 Purpose
+Run database schema migrations as an explicit, gated CI step rather than from the application pod at startup. The pod's runtime principal holds CRUD grants only; schema changes are owned by the deploy pipeline authenticated as a member of the `Platform-Admin` Entra group (or whatever Postgres-admin group your environment uses).
+
+#### 📊 Workflow Diagram
+```mermaid
+graph LR
+    A[Trigger] --> B[Migration Plan]
+    B --> C{Pending model<br/>changes captured?}
+    C -->|No| X[Fail — missing migration]
+    C -->|Yes| D{New migrations<br/>vs origin/main?}
+    D -->|No| E[End]
+    D -->|Yes| F[Upload SQL artifact]
+    F --> G[Manual Approval]
+    G --> H[Migration Apply]
+    H --> E
+```
+
+#### 🔑 Key Features
+- **Model-vs-history check**: `dotnet ef migrations has-pending-model-changes` fails the build when a developer edits an entity but forgets `dotnet ef migrations add` — the most common migration bug.
+- **PR-time SQL preview**: idempotent SQL script generated from the last migration on `main`, dumped to the run log and uploaded as a `migration-sql` artifact for reviewer inspection.
+- **Auto-skip on no-op pushes**: if a push to main contains no new migration files, the approve and apply jobs are skipped entirely — no nagging review prompts for non-schema changes.
+- **OIDC authentication**: same `azure/login@v3` flow as the Terraform workflow. The calling principal must be an Entra-group member of your Postgres-admin role.
+- **Token-based Postgres auth**: `Microsoft.Azure.PostgreSQL.Auth` in the consumer project mints the access token via `DefaultAzureCredential`; password is intentionally absent from the connection string.
+- **Concurrency-safe**: a `db-migrations-{repo}-{env}` concurrency group prevents two main pushes from racing into a parallel apply.
+
+#### 📥 Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `project_path` | ✅ | - | Path to the `.csproj` that owns EF migrations (e.g. `Identity.Api/Identity.Api.csproj`) |
+| `dotnet_version` | ❌ | `10.0.x` | .NET SDK version installed on the runner |
+| `db_host` | ✅ | - | Postgres server FQDN (e.g. `psql-nftx-prod.postgres.database.azure.com`) |
+| `db_name` | ✅ | - | Logical database name on the server |
+| `db_username` | ✅ | - | Postgres role mapped to an Entra principal/group the calling `AZURE_CLIENT_ID` is a member of (e.g. `Platform-Admin`) |
+| `environment_name` | ❌ | `Production` | GitHub Environment used to gate the apply step |
+
+#### 🔒 Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
+| `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
+| `NIFTROX_FEED` | ❌ | Classic PAT with `read:packages` if `dotnet restore` needs a private feed |
+
+#### 🎬 Jobs Flow
+1. **Migration Plan** — runs on every PR and main push. Builds, asserts model/migration sync, detects new migrations against `origin/main`, generates idempotent SQL, uploads as artifact.
+2. **Manual Approval** — runs only on main when plan saw new migrations. Gated by GitHub Environment protection rules.
+3. **Migration Apply** — runs only after approve succeeds. Logs into Azure via OIDC, runs `dotnet ef database update` against the prod database.
+
+#### 📋 Prerequisites
+- The Postgres server uses **Entra-only authentication**.
+- The `db_username` is a Postgres role created via `pgaadauth_create_principal('<name>', false, true)` (third arg `true` for groups) and mapped to an Entra principal or group.
+- The calling `AZURE_CLIENT_ID` service principal is a member of that Entra principal/group.
+- The consuming project references `Microsoft.Azure.PostgreSQL.Auth` (or equivalent Npgsql password-provider integration) so Npgsql acquires tokens automatically when the connection string omits a password.
+
+</details>
+
+---
+
 ## 🚀 Quick Start
 
 ### Step 1: Reference the Workflow
@@ -416,6 +486,43 @@ jobs:
     with:
       terraform_directory: "./terraform"
       environment_name: "Production"
+    secrets: inherit
+```
+
+### Example 5: EF Core Migrations Before Container Push
+
+```yaml
+name: Service CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unit_tests:
+    # … standard test job …
+
+  migrate:
+    needs: unit_tests
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/efcore-migrations-reusable.yml@main
+    with:
+      project_path: Identity.Api/Identity.Api.csproj
+      db_host: psql-nftx-prod.postgres.database.azure.com
+      db_name: identity
+      db_username: Platform-Admin
+      environment_name: Production
+    secrets: inherit
+
+  container:
+    # Build only runs once migrations succeed — the new image never ships
+    # against a stale schema.
+    needs: [unit_tests, migrate]
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/container-workflow.yml@main
+    with:
+      dockerfile: Dockerfile.api
+      image_name: identity-api
+      registry_name: niftroxacr
     secrets: inherit
 ```
 
