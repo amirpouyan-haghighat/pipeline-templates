@@ -88,23 +88,51 @@ jobs:
         id: detect
         run: |
           set -euo pipefail
-          new=$(git diff --name-only --diff-filter=A origin/main...HEAD \
+
+          # On push to main, origin/main already equals HEAD after checkout —
+          # compare against the prior tip (event.before) instead so we can see
+          # what THIS push introduced. On PR events, compare against the PR's
+          # target branch.
+          case "${{ github.event_name }}" in
+            pull_request) base_ref="origin/${{ github.base_ref }}" ;;
+            push)         base_ref="${{ github.event.before }}" ;;
+            *)            base_ref="origin/main" ;;
+          esac
+          if [ -z "$base_ref" ] \
+             || [ "$base_ref" = "0000000000000000000000000000000000000000" ] \
+             || [ "$base_ref" = "origin/" ]; then
+            base_ref="origin/main"
+          fi
+
+          new=$(git diff --name-only --diff-filter=A "$base_ref...HEAD" \
             -- '**/Migrations/*.cs' 2>/dev/null \
             | grep -vE 'Designer\.cs$|ModelSnapshot\.cs$' || true)
           if [ -z "$new" ]; then
-            echo "No new migration files added vs origin/main."
+            echo "No new migration files added vs $base_ref."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "base=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          last_on_main=$(git ls-tree -r origin/main --name-only 2>/dev/null \
+
+          last_applied=$(git ls-tree -r "$base_ref" --name-only 2>/dev/null \
             | grep -E '/Migrations/[0-9]{14}_[A-Za-z0-9_]+\.cs$' \
             | grep -vE 'Designer\.cs$|ModelSnapshot\.cs$' \
             | sed -E 's|.*/([0-9]{14}_[A-Za-z0-9_]+)\.cs|\1|' \
             | sort | tail -1 || true)
+
+          # If the chosen baseline isn't on HEAD (e.g. the branch rebuilt its
+          # migration history), generate from scratch instead — otherwise
+          # `dotnet ef migrations script <id>` errors "migration not found".
+          if [ -n "$last_applied" ] \
+             && ! git ls-tree -r HEAD --name-only \
+                  | grep -qE "/Migrations/${last_applied}\.cs$"; then
+            echo "Baseline ${last_applied} not present on this branch; generating from scratch."
+            last_applied=""
+          fi
+
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          echo "base=${last_on_main:-0}" >> "$GITHUB_OUTPUT"
-          echo "New migrations detected. Baseline on main: ${last_on_main:-<none>}"
+          echo "base=${last_applied:-0}" >> "$GITHUB_OUTPUT"
+          echo "New migrations detected vs $base_ref. Baseline: ${last_applied:-<none>}"
           echo "$new"
 
       - name: Generate idempotent migration SQL
@@ -174,7 +202,12 @@ jobs:
 
       - name: Mint Postgres token and compose connection string
         run: |
+          set -euo pipefail
           token=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
+          if [ -z "$token" ]; then
+            echo "::error::Failed to acquire an Entra access token for Postgres (oss-rdbms)."
+            exit 1
+          fi
           echo "::add-mask::$token"
           echo "Database__ConnectionString=Host=${{ inputs.db_host }};Database=${{ inputs.db_name }};Username=${{ inputs.db_username }};Password=$token;SslMode=Require;" >> "$GITHUB_ENV"
 
