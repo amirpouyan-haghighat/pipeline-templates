@@ -79,7 +79,7 @@ jobs:
         run: dotnet restore "${{ inputs.project_path }}"
 
       - name: Build
-        run: dotnet build "${{ inputs.project_path }}" --no-restore -c Release
+        run: dotnet build "${{ inputs.project_path }}" --no-restore
 
       - name: Assert model matches migrations
         run: dotnet ef migrations has-pending-model-changes --project "${{ inputs.project_path }}" --no-build
@@ -190,7 +190,7 @@ jobs:
         run: dotnet restore "${{ inputs.project_path }}"
 
       - name: Build
-        run: dotnet build "${{ inputs.project_path }}" --no-restore -c Release
+        run: dotnet build "${{ inputs.project_path }}" --no-restore
 
       - name: Apply migrations
         run: dotnet ef database update --project "${{ inputs.project_path }}" --no-build
