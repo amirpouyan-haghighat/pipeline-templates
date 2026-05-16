@@ -39,6 +39,11 @@ on:
         required: false
         default: amirpouyan-haghighat
         type: string
+      force_apply:
+        description: Bypass the git-diff detection and run the apply pipeline regardless of whether the current commit adds migration files. Use to recover from a prior run where a migration merged to main but the apply step failed (so git no longer shows it as new). The generated script is idempotent against `__EFMigrationsHistory`, so re-applying against a fully- or partially-migrated DB is safe.
+        required: false
+        default: false
+        type: boolean
     secrets:
       AZURE_CLIENT_ID:
         description: Azure AD service principal client ID. Must be a member of the Postgres-admin Entra group.
@@ -104,6 +109,17 @@ jobs:
         id: detect
         run: |
           set -euo pipefail
+
+          # Force-apply bypass: recovery path for "migration on main but DB
+          # didn't get it" (prior apply failed). Generate the full idempotent
+          # script from scratch; EF skips migrations already in
+          # __EFMigrationsHistory, so re-applying is safe.
+          if [ "${{ inputs.force_apply }}" = "true" ]; then
+            echo "Force-apply requested: bypassing git-diff detection, generating from base=0."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "base=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # On push to main, origin/main already equals HEAD after checkout —
           # compare against the prior tip (event.before). On PR events,
