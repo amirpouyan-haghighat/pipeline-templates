@@ -295,7 +295,7 @@ graph LR
 
 **File:** `.github/workflows/efcore-migrations-reusable.yml`
 
-Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL with OIDC authentication.
+Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL using a runner-minted Entra access token (Azure OIDC federation).
 
 <details>
 <summary>📖 <b>Click to expand details</b></summary>
@@ -317,9 +317,9 @@ graph LR
 #### 🔑 Key Features
 - **Model Sync Check**: Fails when an entity is edited without a matching `dotnet ef migrations add`
 - **SQL Preview**: Idempotent migration script uploaded as `migration-sql` artifact for reviewer inspection
-- **Manual Approval**: Production applies require human approval via GitHub Issue
-- **OIDC Authentication**: Same `azure/login@v3` flow as the Terraform workflow
-- **Concurrency Guard**: Prevents two pushes to main from racing into a parallel apply
+- **Approval Applies Reviewed SQL**: Apply downloads and runs the exact `migration-sql` artifact the approver inspected — not a regenerated script
+- **Entra Token Auth via OIDC**: `azure/login@v3` federates to Azure; an `oss-rdbms` access token is minted and passed to `psql`
+- **Concurrency Guard**: Approve + apply share a concurrency group so two pushes can't race
 
 #### 📥 Inputs
 
@@ -327,10 +327,12 @@ graph LR
 |-------|----------|---------|-------------|
 | `project_path` | ✅ | - | Path to the `.csproj` that owns EF migrations |
 | `dotnet_version` | ❌ | `10.0.x` | .NET SDK version |
+| `dotnet_ef_version` | ❌ | (latest) | Optional `--version` spec for `dotnet tool install dotnet-ef` |
 | `db_host` | ✅ | - | Postgres server FQDN |
 | `db_name` | ✅ | - | Database name |
 | `db_username` | ✅ | - | Postgres role mapped to a Postgres-admin Entra group |
 | `environment_name` | ❌ | `Production` | GitHub environment name |
+| `approvers` | ❌ | `amirpouyan-haghighat` | Comma-separated approvers for the manual-approval issue |
 
 #### 🔒 Secrets
 
@@ -339,12 +341,12 @@ graph LR
 | `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
 | `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
-| `NIFTROX_FEED` | ❌ | Classic PAT for the private NuGet feed |
+| `NIFTROX_FEED` | ❌ | Classic PAT exposed as the `NIFTROX_FEED` env var. The consumer project's `nuget.config` must reference `%NIFTROX_FEED%` to consume it — this workflow does not run `dotnet nuget add source`. |
 
 #### 🎬 Jobs Flow
-1. **Migration Plan** — Builds, checks model/migration sync, generates SQL artifact
+1. **Migration Plan** — Builds, checks model/migration sync, generates idempotent SQL, uploads as `migration-sql` artifact
 2. **Manual Approval** — Awaits human approval (only on main with new migrations)
-3. **Migration Apply** — Runs `dotnet ef database update` against the database
+3. **Migration Apply** — Downloads the reviewed `migration-sql` artifact and runs it via `psql -v ON_ERROR_STOP=1 -f migration.sql` with a fresh Entra token
 
 </details>
 
