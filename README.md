@@ -25,6 +25,7 @@
   - [Terraform Destroy Workflow](#2-terraform-destroy-workflow)
   - [Container Build & Push Workflow](#3-container-build--push-workflow)
   - [OCI Manifest Push Workflow](#4-oci-manifest-push-workflow)
+  - [EF Core Migrations Workflow](#5-ef-core-migrations-workflow)
 - [🚀 Quick Start](#-quick-start)
 - [📚 Usage Examples](#-usage-examples)
 - [🔐 Security](#-security)
@@ -290,6 +291,67 @@ graph LR
 
 ---
 
+### 5️⃣ EF Core Migrations Workflow
+
+**File:** `.github/workflows/efcore-migrations-reusable.yml`
+
+Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL using a runner-minted Entra access token (Azure OIDC federation).
+
+<details>
+<summary>📖 <b>Click to expand details</b></summary>
+
+#### 🎯 Purpose
+Run database schema migrations as a gated CI step authenticated as a Postgres-admin Entra group, not from the application pod.
+
+#### 📊 Workflow Diagram
+```mermaid
+graph LR
+    A[Trigger] --> B[Migration Plan]
+    B --> C{New migrations?}
+    C -->|No| E[End]
+    C -->|Yes| D[Manual Approval]
+    D --> F[Migration Apply]
+    F --> E
+```
+
+#### 🔑 Key Features
+- **Model Sync Check**: Fails when an entity is edited without a matching `dotnet ef migrations add`
+- **SQL Preview**: Idempotent migration script uploaded as `migration-sql` artifact for reviewer inspection
+- **Approval Applies Reviewed SQL**: Apply downloads and runs the exact `migration-sql` artifact the approver inspected — not a regenerated script
+- **Entra Token Auth via OIDC**: `azure/login@v3` federates to Azure; an `oss-rdbms` access token is minted and passed to `psql`
+- **Concurrency Guard**: Approve + apply share a concurrency group so two pushes can't race
+
+#### 📥 Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `project_path` | ✅ | - | Path to the `.csproj` that owns EF migrations |
+| `dotnet_version` | ❌ | `10.0.x` | .NET SDK version |
+| `dotnet_ef_version` | ❌ | (latest) | Optional `--version` spec for `dotnet tool install dotnet-ef` |
+| `db_host` | ✅ | - | Postgres server FQDN |
+| `db_name` | ✅ | - | Database name |
+| `db_username` | ✅ | - | Postgres role mapped to a Postgres-admin Entra group |
+| `environment_name` | ❌ | `Production` | GitHub environment name |
+| `approvers` | ❌ | `amirpouyan-haghighat` | Comma-separated approvers for the manual-approval issue |
+
+#### 🔒 Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
+| `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
+| `NIFTROX_FEED` | ❌ | Classic PAT exposed as the `NIFTROX_FEED` env var. The consumer project's `nuget.config` must reference `%NIFTROX_FEED%` to consume it — this workflow does not run `dotnet nuget add source`. |
+
+#### 🎬 Jobs Flow
+1. **Migration Plan** — Builds, checks model/migration sync, generates idempotent SQL, uploads as `migration-sql` artifact
+2. **Manual Approval** — Awaits human approval (only on main with new migrations)
+3. **Migration Apply** — Downloads the reviewed `migration-sql` artifact and runs it via `psql -v ON_ERROR_STOP=1 -f migration.sql` with a fresh Entra token
+
+</details>
+
+---
+
 ## 🚀 Quick Start
 
 ### Step 1: Reference the Workflow
@@ -416,6 +478,45 @@ jobs:
     with:
       terraform_directory: "./terraform"
       environment_name: "Production"
+    secrets: inherit
+```
+
+### Example 5: EF Core Migrations Before Container Push
+
+```yaml
+name: Service CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unit_tests:
+    # … standard test job …
+
+  migrate:
+    needs: unit_tests
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/efcore-migrations-reusable.yml@main
+    with:
+      project_path: Identity.Api/Identity.Api.csproj
+      db_host: psql-nftx-prod.postgres.database.azure.com
+      db_name: identity
+      db_username: Platform-Admin
+      environment_name: Production
+    secrets: inherit
+
+  container:
+    # `needs: migrate` gates the image build on the migration workflow.
+    # On a PR, that means the plan job (drift check + SQL preview) must
+    # pass. On push-to-main, it means the apply job (which runs the
+    # reviewed SQL via psql) must pass before a new image is pushed.
+    needs: [unit_tests, migrate]
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/container-workflow.yml@main
+    with:
+      dockerfile: Dockerfile.api
+      image_name: identity-api
+      registry_name: niftroxacr
     secrets: inherit
 ```
 

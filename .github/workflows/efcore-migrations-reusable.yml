@@ -1,0 +1,243 @@
+name: reusable-efcore-migrations
+
+on:
+  workflow_call:
+    inputs:
+      project_path:
+        description: Path to the .csproj that owns EF migrations.
+        required: true
+        type: string
+      dotnet_version:
+        description: .NET SDK version to install on the runner.
+        required: false
+        default: "10.0.x"
+        type: string
+      dotnet_ef_version:
+        description: Optional --version spec for `dotnet tool install dotnet-ef`. Leave empty to track latest.
+        required: false
+        default: ""
+        type: string
+      db_host:
+        description: Postgres server FQDN (e.g. psql-nftx-prod.postgres.database.azure.com).
+        required: true
+        type: string
+      db_name:
+        description: Logical database name on the server.
+        required: true
+        type: string
+      db_username:
+        description: Postgres role mapped to an Entra principal or group the calling AZURE_CLIENT_ID is a member of (e.g. "Platform-Admin").
+        required: true
+        type: string
+      environment_name:
+        description: GitHub environment name used to gate the apply step.
+        required: false
+        default: Production
+        type: string
+      approvers:
+        description: Comma-separated GitHub users listed as approvers for the manual-approval issue.
+        required: false
+        default: amirpouyan-haghighat
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        description: Azure AD service principal client ID. Must be a member of the Postgres-admin Entra group.
+        required: true
+      AZURE_TENANT_ID:
+        description: Azure AD tenant ID that owns the service principal.
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: Subscription hosting the Postgres server.
+        required: true
+      NIFTROX_FEED:
+        description: Classic GitHub PAT with read:packages, surfaced as the NIFTROX_FEED env var for dotnet restore. The consumer project's nuget.config must reference %NIFTROX_FEED% to consume it — this workflow does not run `dotnet nuget add source`. Optional.
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    name: Migration Plan
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+    env:
+      NIFTROX_FEED: ${{ secrets.NIFTROX_FEED }}
+      # has-pending-model-changes and migrations script never open a
+      # connection; the design-time factory just needs a parse-valid
+      # placeholder.
+      Database__ConnectionString: Host=design.invalid;Database=design;Username=design
+    outputs:
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+      base: ${{ steps.detect.outputs.base }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Install dotnet-ef
+        run: |
+          if [ -n "${{ inputs.dotnet_ef_version }}" ]; then
+            dotnet tool install --global dotnet-ef --version "${{ inputs.dotnet_ef_version }}"
+          else
+            dotnet tool install --global dotnet-ef
+          fi
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.project_path }}"
+
+      - name: Build
+        run: dotnet build "${{ inputs.project_path }}" --no-restore
+
+      - name: Assert model matches migrations
+        run: dotnet ef migrations has-pending-model-changes --project "${{ inputs.project_path }}" --no-build
+
+      - name: Detect new migrations
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # On push to main, origin/main already equals HEAD after checkout —
+          # compare against the prior tip (event.before). On PR events,
+          # compare against the PR's target branch.
+          case "${{ github.event_name }}" in
+            pull_request) base_ref="origin/${{ github.base_ref }}" ;;
+            push)         base_ref="${{ github.event.before }}" ;;
+            *)            base_ref="origin/main" ;;
+          esac
+          if [ -z "$base_ref" ] \
+             || [ "$base_ref" = "0000000000000000000000000000000000000000" ] \
+             || [ "$base_ref" = "origin/" ]; then
+            base_ref="origin/main"
+          fi
+
+          project_dir="$(dirname "${{ inputs.project_path }}")"
+
+          # AMR catches added, modified, and renamed migration files —
+          # picks up review-time corrections, not just first-add commits.
+          new=$(git diff --name-only --diff-filter=AMR "$base_ref...HEAD" \
+            -- "$project_dir" 2>/dev/null \
+            | grep -E '/Migrations/.*[0-9]{14}_[A-Za-z0-9_]+\.cs$' \
+            | grep -vE 'Designer\.cs$|ModelSnapshot\.cs$' || true)
+          if [ -z "$new" ]; then
+            echo "No new/changed migration files vs $base_ref in $project_dir."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "base=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Scope baseline lookup to this project's migrations only — avoids
+          # picking up a sibling DbContext's migration ID in a monorepo.
+          # `(.*/)?` is optional so it matches both `<proj>/Migrations/...`
+          # and `<proj>/sub/dir/Migrations/...`.
+          last_applied=$(git ls-tree -r "$base_ref" --name-only 2>/dev/null \
+            | grep -E "^${project_dir}/(.*/)?Migrations/[0-9]{14}_[A-Za-z0-9_]+\.cs$" \
+            | grep -vE 'Designer\.cs$|ModelSnapshot\.cs$' \
+            | sed -E 's|.*/([0-9]{14}_[A-Za-z0-9_]+)\.cs|\1|' \
+            | sort | tail -1 || true)
+
+          # If the chosen baseline isn't on HEAD (e.g. branch rebuilt its
+          # migration history), generate from scratch.
+          if [ -n "$last_applied" ] \
+             && ! git ls-tree -r HEAD --name-only \
+                  | grep -qE "/Migrations/${last_applied}\.cs$"; then
+            echo "Baseline ${last_applied} not present on this branch; generating from scratch."
+            last_applied=""
+          fi
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "base=${last_applied:-0}" >> "$GITHUB_OUTPUT"
+          echo "New/changed migrations vs $base_ref. Baseline: ${last_applied:-<none>}"
+          echo "$new"
+
+      - name: Generate idempotent migration SQL
+        if: steps.detect.outputs.has_changes == 'true'
+        run: |
+          dotnet ef migrations script "${{ steps.detect.outputs.base }}" \
+            --project "${{ inputs.project_path }}" \
+            --idempotent --no-build \
+            --output migration.sql
+          echo "::group::Migration SQL"
+          cat migration.sql
+          echo "::endgroup::"
+
+      - name: Upload migration SQL
+        if: steps.detect.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: migration-sql
+          path: migration.sql
+          if-no-files-found: error
+
+  approve:
+    name: Manual Approval
+    runs-on: ubuntu-latest
+    needs: plan
+    if: success() && needs.plan.outputs.has_changes == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment:
+      name: ${{ inputs.environment_name }}
+    concurrency:
+      group: db-migrations-${{ github.repository }}-${{ inputs.environment_name }}
+      cancel-in-progress: false
+
+    permissions:
+      issues: write
+
+    steps:
+      - name: Await Manual Approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ inputs.approvers }}
+          minimum-approvals: 1
+          issue-title: "Manual Approval Required for EF Migration Apply"
+          issue-body: "A new EF Core migration is queued. Review the migration-sql artifact before approving."
+
+  apply:
+    name: Migration Apply
+    needs:
+      - plan
+      - approve
+    if: success()
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+    concurrency:
+      group: db-migrations-${{ github.repository }}-${{ inputs.environment_name }}
+      cancel-in-progress: false
+    steps:
+      - name: Download reviewed migration SQL
+        uses: actions/download-artifact@v7
+        with:
+          name: migration-sql
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply reviewed migration SQL via psql
+        env:
+          PGHOST: ${{ inputs.db_host }}
+          PGDATABASE: ${{ inputs.db_name }}
+          PGUSER: ${{ inputs.db_username }}
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+          token=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
+          if [ -z "$token" ]; then
+            echo "::error::Failed to acquire an Entra access token for Postgres (oss-rdbms)."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          PGPASSWORD="$token" psql -v ON_ERROR_STOP=1 -f migration.sql

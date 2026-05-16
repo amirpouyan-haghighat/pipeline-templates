@@ -11,7 +11,8 @@ on:
         type: string
       dotnet_version:
         description: .NET SDK version (e.g., "10.0.x").
-        required: true
+        required: false
+        default: "10.0.x"
         type: string
       release_branch:
         description: Branch that triggers semantic-release and the NuGet push.
