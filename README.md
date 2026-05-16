@@ -26,6 +26,7 @@
   - [Container Build & Push Workflow](#3-container-build--push-workflow)
   - [OCI Manifest Push Workflow](#4-oci-manifest-push-workflow)
   - [EF Core Migrations Workflow](#5-ef-core-migrations-workflow)
+  - [Dependency Submission Workflow](#6-dependency-submission-workflow)
 - [🚀 Quick Start](#-quick-start)
 - [📚 Usage Examples](#-usage-examples)
 - [🔐 Security](#-security)
@@ -352,6 +353,38 @@ graph LR
 
 ---
 
+### 6️⃣ Dependency Submission Workflow
+
+**File:** `.github/workflows/dependency-submission-reusable.yml`
+
+Submit a .NET solution's resolved NuGet dependency graph to GitHub's Dependency Submission API so Dependabot can see transitive deps from private feeds.
+
+<details>
+<summary>📖 <b>Click to expand details</b></summary>
+
+#### 🎯 Purpose
+Replaces GitHub's auto NuGet dep-submission for repos that consume private feeds. The auto path runs without the consumer's secrets and silently fails on `dotnet restore`, so transitive packages from private feeds never reach the dependency graph. This workflow restores the solution inside a runner where `NIFTROX_FEED` is available and submits the resolved graph.
+
+#### 📥 Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `solution_path` | ✅ | - | Path to the `.sln` (or `.csproj`) to restore |
+| `dotnet_version` | ❌ | `10.0.x` | .NET SDK version |
+
+#### 🔒 Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `NIFTROX_FEED` | ❌ | Classic PAT exposed as the `NIFTROX_FEED` env var. The consumer project's `nuget.config` must reference `%NIFTROX_FEED%`. |
+
+#### 📋 Prerequisites
+Turn off **Automatic dependency submission** at repo `Settings → Code security` so only this workflow runs (otherwise GitHub's auto path coexists and fails silently on every push).
+
+</details>
+
+---
+
 ## 🚀 Quick Start
 
 ### Step 1: Reference the Workflow
@@ -517,6 +550,17 @@ jobs:
       dockerfile: Dockerfile.api
       image_name: identity-api
       registry_name: niftroxacr
+    secrets: inherit
+```
+
+### Example 6: Dependency Submission for a .NET Service
+
+```yaml
+jobs:
+  dep_submission:
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/dependency-submission-reusable.yml@main
+    with:
+      solution_path: Identity.sln
     secrets: inherit
 ```
 
