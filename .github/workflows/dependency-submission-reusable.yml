@@ -1,0 +1,49 @@
+name: reusable-dependency-submission
+
+# Submits the resolved NuGet dependency graph to GitHub's Dependency
+# Submission API. Replaces GitHub's auto NuGet dep-submission for repos
+# that consume private feeds — the auto path runs without consumer
+# secrets and fails silently on private feed restores.
+
+on:
+  workflow_call:
+    inputs:
+      solution_path:
+        description: Path to the .sln (or .csproj) to restore.
+        required: true
+        type: string
+      dotnet_version:
+        description: .NET SDK version to install on the runner.
+        required: false
+        default: "10.0.x"
+        type: string
+    secrets:
+      NIFTROX_FEED:
+        description: Classic GitHub PAT with read:packages, surfaced as the NIFTROX_FEED env var for dotnet restore. The consumer project's nuget.config must reference %NIFTROX_FEED% to consume it. Optional.
+        required: false
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  submit:
+    name: Submit NuGet Dependency Graph
+    runs-on: ubuntu-latest
+    env:
+      NIFTROX_FEED: ${{ secrets.NIFTROX_FEED }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Restore so the dependency graph resolves transitive deps
+        run: dotnet restore "${{ inputs.solution_path }}"
+
+      - name: Submit NuGet dependency graph
+        uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
+        continue-on-error: true
