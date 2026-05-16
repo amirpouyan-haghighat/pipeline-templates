@@ -57,4 +57,4 @@ jobs:
         # them into a graph submission to GitHub's Dependency Submission
         # API. The action has no `solution_path` equivalent — scoping is
         # done implicitly by which projects were restored.
-        uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
+        uses: advanced-security/component-detection-dependency-submission-action@v0.1.3
