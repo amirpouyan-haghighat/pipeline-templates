@@ -338,12 +338,14 @@ graph LR
 
 #### 🔒 Secrets
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
-| `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
-| `NIFTROX_FEED` | ❌ | Classic PAT with `read:packages`. Surfaced to the runner as the `NIFTROX_FEED` env var only — **not** wired into `dotnet nuget add source`. The consumer's `nuget.config` must perform the substitution itself (`%NIFTROX_FEED%` in a `<packageSourceCredentials>` entry). Omit entirely if no private feed is needed. |
+This workflow declares no `workflow_call.secrets` block. Callers pass their full secret context with `secrets: inherit`, and the workflow reads what it needs directly at the appropriate scope (env-scoped for `apply`, repo-scoped for `plan`/`apply` NuGet restore). The caller must have the following secrets configured:
+
+| Secret | Required | Where | Description |
+|--------|----------|-------|-------------|
+| `AZURE_CLIENT_ID` | ✅ at apply | **GitHub Environment** named by `environment_name` (e.g. `Production`) | Service principal client ID; must be a member of the Postgres-admin Entra group (e.g. `Platform-Admin`). Apply runs inside the environment, so it resolves against environment-scoped secrets. |
+| `AZURE_TENANT_ID` | ✅ at apply | same environment | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | ✅ at apply | same environment | Subscription hosting the Postgres server |
+| `NIFTROX_FEED` | ❌ | **Repository-level secret** | Classic PAT with `read:packages`. Surfaced to the runner as the `NIFTROX_FEED` env var only — **not** wired into `dotnet nuget add source`. The consumer's `nuget.config` must perform the substitution itself (`%NIFTROX_FEED%` in a `<packageSourceCredentials>` entry). Omit entirely if no private feed is needed. |
 
 #### 🎬 Jobs Flow
 1. **Migration Plan** — runs on every PR and main push. Builds, asserts model/migration sync, detects new migrations against `origin/main`, generates idempotent SQL, uploads as artifact.
