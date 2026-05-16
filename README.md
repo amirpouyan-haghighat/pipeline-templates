@@ -334,6 +334,7 @@ graph LR
 | `db_username` | ✅ | - | Postgres role mapped to a Postgres-admin Entra group |
 | `environment_name` | ❌ | `Production` | GitHub environment name |
 | `approvers` | ❌ | `amirpouyan-haghighat` | Comma-separated approvers for the manual-approval issue |
+| `force_apply` | ❌ | `false` | Bypass the git-diff detection and run the apply pipeline regardless of whether the current commit adds migration files. Recovery path for "migration on main but DB didn't get it" (prior apply failed). The generated script is idempotent against `__EFMigrationsHistory`, so re-applying against a fully- or partially-migrated DB is safe. Wire from a caller's `workflow_dispatch` input. |
 
 #### 🔒 Secrets
 
