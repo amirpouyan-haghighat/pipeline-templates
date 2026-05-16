@@ -507,8 +507,10 @@ jobs:
     secrets: inherit
 
   container:
-    # Build only runs once migrations succeed — the new image never ships
-    # against a stale schema.
+    # `needs: migrate` gates the image build on the migration workflow.
+    # On a PR, that means the plan job (drift check + SQL preview) must
+    # pass. On push-to-main, it means the apply job (which runs the
+    # reviewed SQL via psql) must pass before a new image is pushed.
     needs: [unit_tests, migrate]
     uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/container-workflow.yml@main
     with:
