@@ -60,7 +60,13 @@ on:
         description: Azure subscription ID hosting the Postgres server.
         required: true
       NIFTROX_FEED:
-        description: Optional classic GitHub PAT (read:packages) used by `dotnet restore` for private feeds.
+        description: |
+          Optional classic GitHub PAT (read:packages). When provided, the workflow
+          exports it as the NIFTROX_FEED environment variable on the runner; it is
+          NOT wired into a `dotnet nuget add source` step. The consumer project's
+          nuget.config must do the substitution itself (typically with
+          `<ClearTextPassword>%NIFTROX_FEED%</ClearTextPassword>`). Omit the secret
+          entirely if your restore does not need a private feed.
         required: false
 
 permissions:

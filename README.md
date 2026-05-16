@@ -343,7 +343,7 @@ graph LR
 | `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
 | `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
-| `NIFTROX_FEED` | ❌ | Classic PAT with `read:packages` if `dotnet restore` needs a private feed |
+| `NIFTROX_FEED` | ❌ | Classic PAT with `read:packages`. Surfaced to the runner as the `NIFTROX_FEED` env var only — **not** wired into `dotnet nuget add source`. The consumer's `nuget.config` must perform the substitution itself (`%NIFTROX_FEED%` in a `<packageSourceCredentials>` entry). Omit entirely if no private feed is needed. |
 
 #### 🎬 Jobs Flow
 1. **Migration Plan** — runs on every PR and main push. Builds, asserts model/migration sync, detects new migrations against `origin/main`, generates idempotent SQL, uploads as artifact.
@@ -354,7 +354,8 @@ graph LR
 - The Postgres server uses **Entra-only authentication**.
 - The `db_username` is a Postgres role created via `pgaadauth_create_principal('<name>', false, true)` (third arg `true` for groups) and mapped to an Entra principal or group.
 - The calling `AZURE_CLIENT_ID` service principal is a member of that Entra principal/group.
-- The consuming project references `Microsoft.Azure.PostgreSQL.Auth` (or equivalent Npgsql password-provider integration) so Npgsql acquires tokens automatically when the connection string omits a password.
+- The calling workflow's top-level `permissions:` block must include `issues: write` — the `approve` job uses `trstringer/manual-approval@v1`, which opens a GitHub issue to gate the apply. GitHub Actions rejects called-workflow permissions that exceed the caller's, so missing `issues: write` upstream produces a `startup_failure: nested job 'approve' is requesting 'issues: write' but is only allowed 'issues: none'` error.
+- If `dotnet restore` needs a private NuGet feed: the consumer project's `nuget.config` must reference the secret via `%NIFTROX_FEED%` substitution. The workflow exposes the value as an env var; the actual feed wiring is the consumer's responsibility.
 
 </details>
 
