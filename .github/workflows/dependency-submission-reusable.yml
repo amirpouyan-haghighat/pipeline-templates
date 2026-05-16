@@ -42,8 +42,19 @@ jobs:
           dotnet-version: ${{ inputs.dotnet_version }}
 
       - name: Restore so the dependency graph resolves transitive deps
+        # `dotnet restore` writes `obj/project.assets.json` for each
+        # project in the solution. The submission action below reads
+        # those files to capture the transitive graph (private-feed
+        # packages and their dependencies). `solution_path` thus scopes
+        # both the restore here AND the transitive deps the action can
+        # see — only projects in this solution will have a populated
+        # assets.json for the action to read.
         run: dotnet restore "${{ inputs.solution_path }}"
 
       - name: Submit NuGet dependency graph
+        # Scans the workspace for `*.csproj`, `packages.config`, and the
+        # `project.assets.json` produced by the restore step above; merges
+        # them into a graph submission to GitHub's Dependency Submission
+        # API. The action has no `solution_path` equivalent — scoping is
+        # done implicitly by which projects were restored.
         uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
-        continue-on-error: true
