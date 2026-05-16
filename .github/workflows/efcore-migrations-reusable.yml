@@ -136,8 +136,10 @@ jobs:
 
           # Scope baseline lookup to this project's migrations only — avoids
           # picking up a sibling DbContext's migration ID in a monorepo.
+          # `(.*/)?` is optional so it matches both `<proj>/Migrations/...`
+          # and `<proj>/sub/dir/Migrations/...`.
           last_applied=$(git ls-tree -r "$base_ref" --name-only 2>/dev/null \
-            | grep -E "^${project_dir}/.*/Migrations/[0-9]{14}_[A-Za-z0-9_]+\.cs$" \
+            | grep -E "^${project_dir}/(.*/)?Migrations/[0-9]{14}_[A-Za-z0-9_]+\.cs$" \
             | grep -vE 'Designer\.cs$|ModelSnapshot\.cs$' \
             | sed -E 's|.*/([0-9]{14}_[A-Za-z0-9_]+)\.cs|\1|' \
             | sort | tail -1 || true)
@@ -213,7 +215,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Download reviewed migration SQL
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: migration-sql
 
