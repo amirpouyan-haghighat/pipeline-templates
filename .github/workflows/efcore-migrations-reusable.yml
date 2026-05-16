@@ -1,22 +1,5 @@
 name: reusable-efcore-migrations
 
-# Reusable workflow that plans, gates, and applies EF Core migrations against
-# an Azure Database for PostgreSQL Flexible Server with Entra-only authentication.
-#
-# Three jobs (mirrors terraform-reusable.yml):
-#   plan    — runs on every PR and main push. Asserts the DbContext model is in
-#             sync with the migration history (catches forgotten `migrations add`),
-#             detects new migrations vs origin/main, generates an idempotent SQL
-#             script from that baseline, and uploads it as an artifact.
-#   approve — runs only on main when plan saw new migrations. Uses GitHub
-#             Environment protection plus a manual approval issue.
-#   apply   — runs only after approve. Logs into Azure via OIDC (the calling
-#             principal must be a member of the Postgres-admin Entra group, e.g.
-#             Platform-Admin), then runs `dotnet ef database update`.
-#
-# Concurrency group serializes applies per repository + environment so two
-# pushes to main cannot race.
-
 on:
   workflow_call:
     inputs:
@@ -38,34 +21,27 @@ on:
         required: true
         type: string
       db_username:
-        description: |
-          Postgres role mapped to an Entra principal or group the calling
-          AZURE_CLIENT_ID is a member of. Typically a group name such as
-          "Platform-Admin" registered via pgaadauth_create_principal.
+        description: Postgres role mapped to an Entra principal or group the calling AZURE_CLIENT_ID is a member of (e.g. "Platform-Admin").
         required: true
         type: string
       environment_name:
-        description: GitHub environment used to gate the apply step.
+        description: GitHub environment name used to gate the apply step.
         required: false
         default: Production
         type: string
-    # No `secrets:` declaration. The caller passes its full secret context
-    # with `secrets: inherit`, and the workflow reads the values it needs
-    # directly via `${{ secrets.X }}` inside the relevant job:
-    #
-    #   - The `apply` job runs inside `environment: ${{ inputs.environment_name }}`,
-    #     so it resolves AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-    #     from the caller's GitHub Environment of the same name (the standard
-    #     place to store Azure OIDC credentials, same as terraform-reusable.yml
-    #     and container-workflow.yml).
-    #   - Both `plan` and `apply` read NIFTROX_FEED from the caller's
-    #     repository-level secrets (no environment scope needed for a NuGet
-    #     restore PAT).
-    #
-    # Declaring these in `workflow_call.secrets` would force GitHub to resolve
-    # them at the calling job's scope rather than at the called job's
-    # environment scope, which breaks env-scoped credentials. See README
-    # prerequisites for the required secrets list.
+    secrets:
+      AZURE_CLIENT_ID:
+        description: Azure AD service principal client ID. Must be a member of the Postgres-admin Entra group.
+        required: true
+      AZURE_TENANT_ID:
+        description: Azure AD tenant ID that owns the service principal.
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: Subscription hosting the Postgres server.
+        required: true
+      NIFTROX_FEED:
+        description: Classic GitHub PAT with read:packages used by dotnet restore for the private NuGet feed. Optional.
+        required: false
 
 permissions:
   contents: read
@@ -75,8 +51,13 @@ jobs:
   plan:
     name: Migration Plan
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
     env:
       NIFTROX_FEED: ${{ secrets.NIFTROX_FEED }}
+      # has-pending-model-changes / migrations script never open a connection;
+      # the design-time factory just needs a parse-valid placeholder.
+      Database__ConnectionString: Host=design.invalid;Database=design;Username=design
     outputs:
       has_changes: ${{ steps.detect.outputs.has_changes }}
       base: ${{ steps.detect.outputs.base }}
@@ -101,13 +82,7 @@ jobs:
         run: dotnet build "${{ inputs.project_path }}" --no-restore -c Release
 
       - name: Assert model matches migrations
-        run: |
-          dotnet ef migrations has-pending-model-changes \
-            --project "${{ inputs.project_path }}" \
-            --no-build || {
-              echo "::error::DbContext model has changes not captured in a migration. Run 'dotnet ef migrations add <Name>' and commit the result."
-              exit 1
-            }
+        run: dotnet ef migrations has-pending-model-changes --project "${{ inputs.project_path }}" --no-build
 
       - name: Detect new migrations
         id: detect
@@ -155,15 +130,13 @@ jobs:
     name: Manual Approval
     runs-on: ubuntu-latest
     needs: plan
-    if: |
-      success() &&
-      github.ref == 'refs/heads/main' &&
-      github.event_name != 'pull_request' &&
-      needs.plan.outputs.has_changes == 'true'
+    if: success() && needs.plan.outputs.has_changes == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment:
       name: ${{ inputs.environment_name }}
+
     permissions:
       issues: write
+
     steps:
       - name: Await Manual Approval
         uses: trstringer/manual-approval@v1
@@ -171,22 +144,16 @@ jobs:
           secret: ${{ github.token }}
           approvers: amirpouyan-haghighat
           minimum-approvals: 1
-          issue-title: "Approve EF migration apply for ${{ github.repository }}"
-          issue-body: |
-            A new EF Core migration is queued to apply to ${{ inputs.environment_name }}.
-            Review the `migration-sql` artifact on the run that triggered this approval.
+          issue-title: "Manual Approval Required for EF Migration Apply"
+          issue-body: "A new EF Core migration is queued. Review the migration-sql artifact before approving."
 
   apply:
     name: Migration Apply
-    runs-on: ubuntu-latest
     needs:
       - plan
       - approve
-    if: |
-      success() &&
-      github.ref == 'refs/heads/main' &&
-      github.event_name != 'pull_request' &&
-      needs.plan.outputs.has_changes == 'true'
+    if: success()
+    runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment_name }}
     concurrency:
@@ -205,19 +172,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Mint Postgres Entra token and build connection string
+      - name: Mint Postgres token and compose connection string
         run: |
-          # The EF design-time DbContext factory (ApplicationDbContextFactory)
-          # uses UseNpgsql(connectionString) directly — it does NOT call
-          # UseEntraAuthentication, so the connection string MUST carry a
-          # password. We mint a fresh Entra access token scoped to Azure DB
-          # for PostgreSQL (oss-rdbms), mask it from logs, and write the
-          # composed connection string into the job environment. Token TTL
-          # is 5–60 min; an apply takes seconds, no refresh needed.
           token=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
           echo "::add-mask::$token"
-          conn="Host=${{ inputs.db_host }};Database=${{ inputs.db_name }};Username=${{ inputs.db_username }};Password=${token};SslMode=Require;"
-          echo "Database__ConnectionString=${conn}" >> "$GITHUB_ENV"
+          echo "Database__ConnectionString=Host=${{ inputs.db_host }};Database=${{ inputs.db_name }};Username=${{ inputs.db_username }};Password=$token;SslMode=Require;" >> "$GITHUB_ENV"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -234,7 +193,4 @@ jobs:
         run: dotnet build "${{ inputs.project_path }}" --no-restore -c Release
 
       - name: Apply migrations
-        run: |
-          dotnet ef database update \
-            --project "${{ inputs.project_path }}" \
-            --no-build
+        run: dotnet ef database update --project "${{ inputs.project_path }}" --no-build

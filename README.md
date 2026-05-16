@@ -295,69 +295,56 @@ graph LR
 
 **File:** `.github/workflows/efcore-migrations-reusable.yml`
 
-Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL with Entra-only authentication. Mirrors the Terraform workflow's plan → approve → apply shape so the cognitive model is identical across infrastructure and schema changes.
+Plan, gate, and apply EF Core migrations against Azure Database for PostgreSQL with OIDC authentication.
 
 <details>
 <summary>📖 <b>Click to expand details</b></summary>
 
 #### 🎯 Purpose
-Run database schema migrations as an explicit, gated CI step rather than from the application pod at startup. The pod's runtime principal holds CRUD grants only; schema changes are owned by the deploy pipeline authenticated as a member of the `Platform-Admin` Entra group (or whatever Postgres-admin group your environment uses).
+Run database schema migrations as a gated CI step authenticated as a Postgres-admin Entra group, not from the application pod.
 
 #### 📊 Workflow Diagram
 ```mermaid
 graph LR
     A[Trigger] --> B[Migration Plan]
-    B --> C{Pending model<br/>changes captured?}
-    C -->|No| X[Fail — missing migration]
-    C -->|Yes| D{New migrations<br/>vs origin/main?}
-    D -->|No| E[End]
-    D -->|Yes| F[Upload SQL artifact]
-    F --> G[Manual Approval]
-    G --> H[Migration Apply]
-    H --> E
+    B --> C{New migrations?}
+    C -->|No| E[End]
+    C -->|Yes| D[Manual Approval]
+    D --> F[Migration Apply]
+    F --> E
 ```
 
 #### 🔑 Key Features
-- **Model-vs-history check**: `dotnet ef migrations has-pending-model-changes` fails the build when a developer edits an entity but forgets `dotnet ef migrations add` — the most common migration bug.
-- **PR-time SQL preview**: idempotent SQL script generated from the last migration on `main`, dumped to the run log and uploaded as a `migration-sql` artifact for reviewer inspection.
-- **Auto-skip on no-op pushes**: if a push to main contains no new migration files, the approve and apply jobs are skipped entirely — no nagging review prompts for non-schema changes.
-- **OIDC authentication**: same `azure/login@v3` flow as the Terraform workflow. The calling principal must be an Entra-group member of your Postgres-admin role.
-- **Token-based Postgres auth**: `Microsoft.Azure.PostgreSQL.Auth` in the consumer project mints the access token via `DefaultAzureCredential`; password is intentionally absent from the connection string.
-- **Concurrency-safe**: a `db-migrations-{repo}-{env}` concurrency group prevents two main pushes from racing into a parallel apply.
+- **Model Sync Check**: Fails when an entity is edited without a matching `dotnet ef migrations add`
+- **SQL Preview**: Idempotent migration script uploaded as `migration-sql` artifact for reviewer inspection
+- **Manual Approval**: Production applies require human approval via GitHub Issue
+- **OIDC Authentication**: Same `azure/login@v3` flow as the Terraform workflow
+- **Concurrency Guard**: Prevents two pushes to main from racing into a parallel apply
 
 #### 📥 Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `project_path` | ✅ | - | Path to the `.csproj` that owns EF migrations (e.g. `Identity.Api/Identity.Api.csproj`) |
-| `dotnet_version` | ❌ | `10.0.x` | .NET SDK version installed on the runner |
-| `db_host` | ✅ | - | Postgres server FQDN (e.g. `psql-nftx-prod.postgres.database.azure.com`) |
-| `db_name` | ✅ | - | Logical database name on the server |
-| `db_username` | ✅ | - | Postgres role mapped to an Entra principal/group the calling `AZURE_CLIENT_ID` is a member of (e.g. `Platform-Admin`) |
-| `environment_name` | ❌ | `Production` | GitHub Environment used to gate the apply step |
+| `project_path` | ✅ | - | Path to the `.csproj` that owns EF migrations |
+| `dotnet_version` | ❌ | `10.0.x` | .NET SDK version |
+| `db_host` | ✅ | - | Postgres server FQDN |
+| `db_name` | ✅ | - | Database name |
+| `db_username` | ✅ | - | Postgres role mapped to a Postgres-admin Entra group |
+| `environment_name` | ❌ | `Production` | GitHub environment name |
 
 #### 🔒 Secrets
 
-This workflow declares no `workflow_call.secrets` block. Callers pass their full secret context with `secrets: inherit`, and the workflow reads what it needs directly at the appropriate scope (env-scoped for `apply`, repo-scoped for `plan`/`apply` NuGet restore). The caller must have the following secrets configured:
-
-| Secret | Required | Where | Description |
-|--------|----------|-------|-------------|
-| `AZURE_CLIENT_ID` | ✅ at apply | **GitHub Environment** named by `environment_name` (e.g. `Production`) | Service principal client ID; must be a member of the Postgres-admin Entra group (e.g. `Platform-Admin`). Apply runs inside the environment, so it resolves against environment-scoped secrets. |
-| `AZURE_TENANT_ID` | ✅ at apply | same environment | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | ✅ at apply | same environment | Subscription hosting the Postgres server |
-| `NIFTROX_FEED` | ❌ | **Repository-level secret** | Classic PAT with `read:packages`. Surfaced to the runner as the `NIFTROX_FEED` env var only — **not** wired into `dotnet nuget add source`. The consumer's `nuget.config` must perform the substitution itself (`%NIFTROX_FEED%` in a `<packageSourceCredentials>` entry). Omit entirely if no private feed is needed. |
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `AZURE_CLIENT_ID` | ✅ | Service principal client ID; must be a member of the Postgres-admin Entra group |
+| `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | ✅ | Subscription hosting the Postgres server |
+| `NIFTROX_FEED` | ❌ | Classic PAT for the private NuGet feed |
 
 #### 🎬 Jobs Flow
-1. **Migration Plan** — runs on every PR and main push. Builds, asserts model/migration sync, detects new migrations against `origin/main`, generates idempotent SQL, uploads as artifact.
-2. **Manual Approval** — runs only on main when plan saw new migrations. Gated by GitHub Environment protection rules.
-3. **Migration Apply** — runs only after approve succeeds. Logs into Azure via OIDC, runs `dotnet ef database update` against the prod database.
-
-#### 📋 Prerequisites
-- The Postgres server uses **Entra-only authentication**.
-- The `db_username` is a Postgres role created via `pgaadauth_create_principal('<name>', false, true)` (third arg `true` for groups) and mapped to an Entra principal or group.
-- The calling `AZURE_CLIENT_ID` service principal is a member of that Entra principal/group.
-- The calling workflow's top-level `permissions:` block must include `issues: write` — the `approve` job uses `trstringer/manual-approval@v1`, which opens a GitHub issue to gate the apply. GitHub Actions rejects called-workflow permissions that exceed the caller's, so missing `issues: write` upstream produces a `startup_failure: nested job 'approve' is requesting 'issues: write' but is only allowed 'issues: none'` error.
-- If `dotnet restore` needs a private NuGet feed: the consumer project's `nuget.config` must reference the secret via `%NIFTROX_FEED%` substitution. The workflow exposes the value as an env var; the actual feed wiring is the consumer's responsibility.
+1. **Migration Plan** — Builds, checks model/migration sync, generates SQL artifact
+2. **Manual Approval** — Awaits human approval (only on main with new migrations)
+3. **Migration Apply** — Runs `dotnet ef database update` against the database
 
 </details>
 
