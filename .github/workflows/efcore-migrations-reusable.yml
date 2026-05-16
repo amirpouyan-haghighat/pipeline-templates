@@ -50,15 +50,22 @@ on:
         default: Production
         type: string
     secrets:
+      # Azure secrets are consumed only by the `apply` job, which runs inside
+      # the GitHub Environment named by `environment_name`. Declared as
+      # required:false so the workflow_call validation (which happens at the
+      # caller's job scope, NOT the environment scope) does not reject the
+      # call when the caller stores these at the environment level rather
+      # than the repository level. azure/login fails fast at apply-time with
+      # a clear error if they end up missing in scope.
       AZURE_CLIENT_ID:
-        description: Azure AD application client ID. Must hold DDL grants on the target DB (typically via Entra-group membership in Platform-Admin).
-        required: true
+        description: Azure AD application client ID. Must hold DDL grants on the target DB (typically via Entra-group membership in Platform-Admin). Required at apply-time; not consumed by plan.
+        required: false
       AZURE_TENANT_ID:
-        description: Azure AD tenant ID that owns the service principal.
-        required: true
+        description: Azure AD tenant ID that owns the service principal. Required at apply-time; not consumed by plan.
+        required: false
       AZURE_SUBSCRIPTION_ID:
-        description: Azure subscription ID hosting the Postgres server.
-        required: true
+        description: Azure subscription ID hosting the Postgres server. Required at apply-time; not consumed by plan.
+        required: false
       NIFTROX_FEED:
         description: |
           Optional classic GitHub PAT (read:packages). When provided, the workflow
