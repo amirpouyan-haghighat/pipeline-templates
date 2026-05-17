@@ -301,6 +301,16 @@ jobs:
     secrets: inherit
 ```
 
+#### When to use this reusable vs leaving release inline
+
+`container-workflow.yml` is wired to take release as input from this reusable. `go-reusable.yml` and `nuget-reusable.yml` still run `semantic-release` **inline** inside their own job — that's deliberate.
+
+Use this reusable (extract release into its own job) **when a single workflow invokes the consumer multiple times in parallel** — e.g. a service that builds an API image + a worker image from the same repo. Parallel invocations of the inline pattern race on the per-version git note push (`refs/notes/semantic-release-vX.Y.Z`) and the loser fails the pipeline. `container-workflow` hit this in production; extracting was the fix.
+
+Leave release **inline** (no separate `release:` job) when the caller invokes the reusable exactly once per workflow run — one Go binary, one NuGet publish job. There's no race to fix, and the extra `release:` job + input plumbing is boilerplate without a payoff. `go-reusable.yml` and `nuget-reusable.yml` stay nested for this reason.
+
+If a future caller of `go-reusable.yml` / `nuget-reusable.yml` starts fanning the job out in parallel, follow `container-workflow.yml`'s path: strip the inline release from the reusable, add `release_version` / `release_published` inputs, have callers invoke this reusable separately. Don't pre-emptively extract.
+
 </details>
 
 ---
