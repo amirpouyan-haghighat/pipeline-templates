@@ -33,6 +33,16 @@ on:
         required: false
         default: Production
         type: string
+      release_version:
+        description: Semantic version produced by the upstream semantic-release job (e.g. 1.2.3). Empty when no release was published on this push. When set, the built image is tagged with full + major.minor + major semver.
+        required: false
+        default: ""
+        type: string
+      release_published:
+        description: "'true' when the upstream semantic-release job published a new release on this push, 'false' otherwise."
+        required: false
+        default: "false"
+        type: string
     secrets:
       AZURE_CLIENT_ID:
         description: Azure AD application (service principal) client ID for registry authentication.
@@ -44,7 +54,7 @@ on:
         description: Azure subscription ID that contains the registry.
         required: true
       REPO_PAT:
-        description: GitHub PAT used for Argo config writes and semantic-release (general cross-repo workflow ops). Fine-grained or classic — does not need package permissions.
+        description: GitHub PAT consumed by amannn/action-semantic-pull-request for PR title validation. Fine-grained or classic. Semantic-release itself runs in a separate reusable (semantic-release-reusable.yml) and uses its own copy of this secret.
         required: true
       NIFTROX_FEED:
         description: Classic GitHub PAT with read:packages used inside the docker build for cross-repo NuGet restore from the private GitHub Packages feed (Niftrox.Contracts.*). Optional — only required when the Dockerfile pulls from the private feed.
@@ -62,8 +72,6 @@ jobs:
     environment:
       name: ${{ inputs.environment_name }}
     outputs:
-      release_version: ${{ steps.release.outputs.new_release_version }}
-      release_published: ${{ steps.release.outputs.new_release_published }}
       image_digest: ${{ steps.build.outputs.digest }}
     env:
       REGISTRY_LOGIN_SERVER: ${{ inputs.registry_name }}.azurecr.io
@@ -100,15 +108,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Run semantic-release
-        id: release
-        if: github.event_name != 'pull_request' && github.ref == env.RELEASE_BRANCH_REF
-        uses: amirpouyan-haghighat/pipeline-templates/.github/actions/semantic-release@main
-        with:
-          release_branch: ${{ inputs.release_branch }}
-          repo_token: ${{ secrets.REPO_PAT }}
-          github_token: ${{ github.token }}
-
       - name: Azure login
         if: github.event_name != 'pull_request' && github.ref == env.RELEASE_BRANCH_REF
         uses: azure/login@v3
@@ -132,9 +131,9 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha
-            ${{ steps.release.outputs.new_release_version && format('type=semver,pattern={{{{version}}}},value={0}', steps.release.outputs.new_release_version) }}
-            ${{ steps.release.outputs.new_release_version && format('type=semver,pattern={{{{major}}}}.{{{{minor}}}},value={0}', steps.release.outputs.new_release_version) }}
-            ${{ steps.release.outputs.new_release_version && format('type=semver,pattern={{{{major}}}},value={0}', steps.release.outputs.new_release_version) }}
+            ${{ inputs.release_version && format('type=semver,pattern={{{{version}}}},value={0}', inputs.release_version) }}
+            ${{ inputs.release_version && format('type=semver,pattern={{{{major}}}}.{{{{minor}}}},value={0}', inputs.release_version) }}
+            ${{ inputs.release_version && format('type=semver,pattern={{{{major}}}},value={0}', inputs.release_version) }}
 
       - name: Build and push image
         id: build
