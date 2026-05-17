@@ -58,6 +58,9 @@ on:
       SEALED_SECRET_PRIVATE_KEY:
         description: Sealed Secrets private key for encrypting secrets.
         required: false
+      GRAFANA_TOKEN:
+        description: Grafana Cloud access policy token used by the grafana-cloud-onboarding Helm release to authenticate to Fleet Management.
+        required: false
 
 permissions:
   contents: read
@@ -70,6 +73,7 @@ env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   TF_VAR_sealed_secrets_public_cert: ${{ secrets.SEALED_SECRET_PUBLIC_CERT }}
   TF_VAR_sealed_secrets_private_key: ${{ secrets.SEALED_SECRET_PRIVATE_KEY }}
+  TF_VAR_grafana_cloud_fleet_management_password: ${{ secrets.GRAFANA_TOKEN }}
 jobs:
   terraform_plan:
     name: Terraform Plan
