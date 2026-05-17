@@ -240,7 +240,7 @@ graph TD
 
 **File:** `.github/workflows/semantic-release-reusable.yml`
 
-Runs `semantic-release` exactly once per push to the release branch and emits the resolved version. Pair with `container-workflow.yml` so multiple parallel container build jobs in the same pipeline share one release (no `refs/notes/semantic-release-*` push races).
+Runs `semantic-release` exactly once per push to the release branch and emits the resolved version. Pair with any downstream reusable that consumes `release_version` / `release_published` — `container-workflow.yml` (image tagging), `nuget-reusable.yml` (package version), or any caller that needs a tag without an artifact dependency (e.g. `go-reusable.yml`). One release per push regardless of how many downstream jobs fan out — no `refs/notes/semantic-release-*` push races.
 
 <details>
 <summary>📖 <b>Click to expand details</b></summary>
