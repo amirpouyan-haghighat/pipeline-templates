@@ -24,6 +24,7 @@
   - [Terraform Reusable Workflow](#1-terraform-reusable-workflow)
   - [Terraform Destroy Workflow](#2-terraform-destroy-workflow)
   - [Container Build & Push Workflow](#3-container-build--push-workflow)
+  - [Semantic Release Workflow](#3a-semantic-release-workflow)
   - [OCI Manifest Push Workflow](#4-oci-manifest-push-workflow)
   - [EF Core Migrations Workflow](#5-ef-core-migrations-workflow)
   - [Dependency Submission Workflow](#6-dependency-submission-workflow)
@@ -168,33 +169,31 @@ Same as [Terraform Reusable Workflow](#1-terraform-reusable-workflow)
 
 **File:** `.github/workflows/container-workflow.yml`
 
-Build, scan, version, and push Docker images with automated semantic versioning and security scanning.
+Build, scan, and push Docker images. Semantic versioning is supplied by the upstream `semantic-release-reusable.yml` (see §3a) so multiple parallel container jobs in the same pipeline share one release.
 
 <details>
 <summary>📖 <b>Click to expand details</b></summary>
 
 #### 🎯 Purpose
-Automate Docker image lifecycle from build to registry with security checks and semantic versioning.
+Automate Docker image lifecycle from build to registry with security checks. Receives the semantic version from a single upstream release job; never runs semantic-release itself.
 
 #### 📊 Workflow Diagram
 ```mermaid
 graph TD
     A[Trigger] --> B{Event Type}
     B -->|Pull Request| C[Validate PR Title]
-    B -->|Main Branch| D[Semantic Release]
-    C --> E[Build Image]
-    D --> F[Azure Login]
-    E --> G[Security Scan]
-    F --> H[Build & Push Image]
-    G --> I[Upload Results]
-    H --> J[End]
-    I --> J
+    B -->|Main Branch| D[Build Image]
+    C --> D
+    D --> E[Azure Login]
+    E --> F[Security Scan]
+    F --> G[Build & Push Image]
+    G --> H[End]
 ```
 
 #### 🔑 Key Features
-- **Semantic Versioning**: Automatic version bumping based on conventional commits
+- **Semantic Tags from Upstream**: Consumes `release_version` input from the upstream `semantic-release-reusable.yml`; tags image with full + major.minor + major semver when provided
 - **Security Scanning**: Trivy vulnerability scanning on PRs
-- **Multi-Tag Strategy**: Generates semantic version, SHA, and branch tags
+- **Multi-Tag Strategy**: Generates SHA, branch and (when a release is published) semver tags
 - **PR Validation**: Ensures PR titles follow conventional commit format
 - **Vulnerability Reports**: Posts scan results as PR comments
 
@@ -206,9 +205,11 @@ graph TD
 | `dockerfile` | ✅ | - | Path to Dockerfile |
 | `image_name` | ✅ | - | Container image name |
 | `registry_name` | ✅ | - | Azure Container Registry name |
-| `release_branch` | ❌ | `main` | Branch triggering releases |
+| `release_branch` | ❌ | `main` | Branch on which images get pushed |
 | `vulnerability_threshold` | ❌ | `HIGH,CRITICAL` | Severity levels surfaced in the PR scan summary (informational; scan does not fail the build) |
 | `environment_name` | ❌ | `Production` | GitHub environment name |
+| `release_version` | ❌ | `""` | Semver string from the upstream `semantic-release-reusable.yml` job's output. Empty = no semver tags get added. |
+| `release_published` | ❌ | `"false"` | `'true'` when the upstream release job published a new release. |
 
 #### 🔒 Secrets
 
@@ -217,14 +218,12 @@ graph TD
 | `AZURE_CLIENT_ID` | ✅ | Azure service principal client ID |
 | `AZURE_TENANT_ID` | ✅ | Azure AD tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | ✅ | Azure subscription ID |
-| `REPO_PAT` | ✅ | Personal access token for releases |
+| `REPO_PAT` | ✅ | Consumed only by the PR-title validator (`amannn/action-semantic-pull-request`). |
 
 #### 📦 Outputs
 
 | Output | Description |
 |--------|-------------|
-| `release_version` | Semantic version assigned |
-| `release_published` | Whether a release was created |
 | `image_digest` | Docker image digest |
 
 #### 🔒 Security Features
@@ -232,6 +231,75 @@ graph TD
 - **Configurable Severity Filter**: Choose which vulnerability levels appear in the PR summary
 - **SARIF Reports**: Structured vulnerability reporting
 - **PR Comments**: Automated security summaries (informational; the scan does not fail the build)
+
+</details>
+
+---
+
+### 3️⃣a Semantic Release Workflow
+
+**File:** `.github/workflows/semantic-release-reusable.yml`
+
+Runs `semantic-release` exactly once per push to the release branch and emits the resolved version. Pair with `container-workflow.yml` so multiple parallel container build jobs in the same pipeline share one release (no `refs/notes/semantic-release-*` push races).
+
+<details>
+<summary>📖 <b>Click to expand details</b></summary>
+
+#### 🎯 Purpose
+Single source of truth for the per-push semantic version. A repo-keyed `concurrency` group serializes any accidental duplicate invocations so the per-version git note push can't race itself.
+
+#### 📥 Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `release_branch` | ❌ | `main` | Branch that triggers semantic-release |
+
+#### 🔒 Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `REPO_PAT` | ✅ | GitHub PAT semantic-release uses to push tags, releases, and the per-version git note |
+
+#### 📦 Outputs
+
+| Output | Description |
+|--------|-------------|
+| `release_version` | Semver string (e.g. `1.2.3`). Empty when no release was published. |
+| `release_published` | `'true'` when a new release was published on this run, else `'false'`. |
+
+#### Wiring
+
+A caller's `automation.yaml`:
+
+```yaml
+jobs:
+  release:
+    needs: unit_tests
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/semantic-release-reusable.yml@main
+    secrets: inherit
+
+  container_api:
+    needs: [unit_tests, release]
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/container-workflow.yml@main
+    with:
+      dockerfile: Dockerfile.api
+      image_name: my-api
+      registry_name: niftroxacr
+      release_version: ${{ needs.release.outputs.release_version }}
+      release_published: ${{ needs.release.outputs.release_published }}
+    secrets: inherit
+
+  container_worker:
+    needs: [unit_tests, release]
+    uses: amirpouyan-haghighat/pipeline-templates/.github/workflows/container-workflow.yml@main
+    with:
+      dockerfile: Dockerfile.worker
+      image_name: my-worker
+      registry_name: niftroxacr
+      release_version: ${{ needs.release.outputs.release_version }}
+      release_published: ${{ needs.release.outputs.release_published }}
+    secrets: inherit
+```
 
 </details>
 
